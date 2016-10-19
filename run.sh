@@ -13,7 +13,7 @@ URL=http://localhost:8080/
  
 function mvn_build_project {
 	local __project_dir=${1:-"$BASEDIR/projects/helloworld-rest-spring-boot"}
-	mvn -q -f ${__project_dir}/pom.xml clean package -DskipTests
+	mvn -q -f ${__project_dir}/pom.xml -DskipTests clean package
 
 }
 
@@ -30,7 +30,7 @@ function open_jconsole {
 
 function run_springboot {
 	printf "Building the project"
-	mvn_build_project
+	mvn_build_project $BASEDIR/projects/helloworld-rest-spring-boot
 	printf '%s%*s%s\n' "$GREEN" $col "[OK]" "$NORMAL"
 
 	printf "Waiting for Spring Boot to start."
@@ -56,6 +56,47 @@ function run_springboot {
 	sleep 30
 
 	kill $(ps -ef | grep helloworld-rs | grep -v grep | awk '{ print $2 }') > /dev/null
+}
+
+function install_eap {
+  if [ ! -d $BASEDIR/target ]
+  then 
+    mkdir -p target
+    unzip -q $BASEDIR/installs/jboss-eap-7.0.2-full-build.zip -d target
+    pushd target/jboss-eap-7* > /dev/null
+    sh bin/add-user.sh -s -u admin -p admin-123
+    popd > /dev/null
+  fi
+}
+
+function start_eap {
+  pushd target/jboss-eap-7* > /dev/null
+  sh bin/standalone.sh > /dev/null 2>&1 & 
+  printf "Start JBoss EAP."
+  until $(curl -s $URL > /dev/null 2>&1) 
+	do
+		printf "."
+		sleep 1
+	done
+  printf '%s%*s%s\n' "$GREEN" $col "[OK]" "$NORMAL"
+  popd > /dev/null
+}
+
+function deploy_war {
+	local __warfile=${1:-"$BASEDIR/projects/helloworld-rest-war/target/helloworld-rs-0.1.0.war"}
+  local __fullpath_warfile="$(cd $(dirname $__warfile) && pwd)/$(basename $__warfile)"
+	pushd target/jboss-eap-7* > /dev/null
+  bin/jboss-cli.sh -c --command="deploy $__fullpath_warfile"
+  popd
+}
+
+function run_eap {
+  mvn_build_project $BASEDIR/projects/helloworld-rest-war
+  install_eap
+  start_eap
+  open_jconsole jboss-eap
+  deploy_war $BASEDIR/projects/helloworld-rest-war/target/helloworld-rs-0.1.0.war
+
 }
 
 function help {
@@ -85,7 +126,7 @@ then
         ;;
       eap)
         shift # past argument
-        not_implemented_yet
+        run_eap "$@"
         ;;
 	  kill-all)
         shift # past argument
