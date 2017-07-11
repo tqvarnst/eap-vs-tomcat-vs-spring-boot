@@ -30,7 +30,7 @@ public class GreetingController {
         this.properties = properties;
     }
 
-    @RequestMapping("/api/greeting")
+    @RequestMapping("/")
     public Greeting greeting(@RequestParam(value="name", defaultValue="World") String name) {
         String message = String.format(properties.getMessage(), name);
         return new Greeting(message);
