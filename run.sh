@@ -3,120 +3,179 @@
 RED=$(tput setaf 1)
 GREEN=$(tput setaf 2)
 NORMAL=$(tput sgr0)
-col=80
+col=$(tput cols)
 
 BASEDIR=$(dirname $0)
-NUM_OF_KILO_CALLS=10
-NUM_OF_USERS=10
+NUM_OF_KILO_CALLS=100
+NUM_OF_USERS=25
 NUM_OF_CALLS=$((NUM_OF_KILO_CALLS*1000))
-URL=http://localhost:8080/
- 
+URL=http://127.0.0.1:8080/
+JBOSS_EAP_ZIP_FILE=jboss-eap-7.0.0.zip
+
+
+function action {
+    IFS='%'
+    local __actionstr=$1
+    local __action=$2
+    local __actionstrlenght=${#__actionstr}
+    
+    printf ${__actionstr}
+
+    let __spaces=${col}-${__actionstrlenght}
+
+    eval ${__action}
+
+    if [ $? -eq 0 ]; then
+        printf '%s%*s%s' "$GREEN" $__spaces "[OK]" "$NORMAL"
+    else
+        printf '%s%*s%s' "$RED" $__spaces "[FAIL]" "$NORMAL"
+    fi
+    printf "\n"
+    
+}
+
 function mvn_build_project {
-	local __project_dir=${1:-"$BASEDIR/projects/helloworld-rest-spring-boot"}
-	mvn -q -f ${__project_dir}/pom.xml -DskipTests clean package
+    local __app_name=${1}
+    local __project_dir="$BASEDIR/projects/${__app_name}"
+    mvn -q -f ${__project_dir}/pom.xml -DskipTests clean package
 
 }
 
 function start_spring_app {
-	 local __app_path=${1:-"$BASEDIR/projects/helloworld-rest-spring-boot/target/helloworld-rs-0.1.0.jar"}
-	 local __max_memory=${2:-"1g"}
-	 java -Xmx${__max_memory} -Xms64m -jar $__app_path > $BASEDIR/spring.log &
+    local __app_name=${1}
+    local __app_path="$BASEDIR/projects/${__app_name}/target/${__app_name}.jar"
+    java -jar $__app_path > $BASEDIR/spring.log &
+    until $(curl -s $URL > /dev/null 2>&1) 
+    do
+        sleep 1
+    done
 }
 
 function open_jconsole {
-	local __app_name=${1:-"helloworld-rs"}
-	jconsole $(ps -ef | grep ${__app_name} | grep -v grep | awk '{ print $2 }') > /dev/null &
-}
-
-function run_springboot {
-	printf "Building the project"
-	mvn_build_project $BASEDIR/projects/helloworld-rest-spring-boot
-	printf '%s%*s%s\n' "$GREEN" $col "[OK]" "$NORMAL"
-
-	printf "Waiting for Spring Boot to start."
-	start_spring_app
-	until $(curl -s $URL > /dev/null 2>&1) 
-	do
-		printf "."
-		sleep 1
-	done
-	printf '%s%*s%s\n' "$GREEN" $col "[OK]" "$NORMAL"
-
-
-	open_jconsole
-
-	echo "Warmup"
-	ab -k -n $NUM_OF_KILO_CALLS -c $NUM_OF_USERS -s 120 $URL > warmup.txt
-
-	sleep 10
-
-	echo "Start performance test"
-	ab -k -n $NUM_OF_CALLS -c $NUM_OF_USERS -s 120 $URL > performance.txt
-
-	sleep 30
-
-	kill $(ps -ef | grep helloworld-rs | grep -v grep | awk '{ print $2 }') > /dev/null
+    local __app_name=${1}
+    jconsole $(jps -l | grep ${__app_name} | grep -v grep | awk '{ print $1 }') &
 }
 
 function install_eap {
-  if [ ! -d $BASEDIR/target ]
-  then 
     mkdir -p target
-    unzip -q $BASEDIR/installs/jboss-eap-7.0.2-full-build.zip -d target
+    test -d $BASEDIR/target/jboss-eap-7.0 && rm -rf $BASEDIR/target/jboss-eap-7.0    
+    unzip -q $BASEDIR/installs/$JBOSS_EAP_ZIP_FILE -d target
     pushd target/jboss-eap-7* > /dev/null
     sh bin/add-user.sh -s -u admin -p admin-123
+    sh bin/jboss-cli.sh --commands="embed-server,/subsystem=undertow/configuration=handler/file=welcome-content:remove()" > /dev/null
     popd > /dev/null
-  fi
 }
 
 function start_eap {
-  pushd target/jboss-eap-7* > /dev/null
-  sh bin/standalone.sh > /dev/null 2>&1 & 
-  printf "Start JBoss EAP."
-  until $(curl -s $URL > /dev/null 2>&1) 
-	do
-		printf "."
-		sleep 1
-	done
-  printf '%s%*s%s\n' "$GREEN" $col "[OK]" "$NORMAL"
-  popd > /dev/null
+    pushd target/jboss-eap-7* > /dev/null
+    sh bin/standalone.sh > /dev/null 2>&1 & 
+    until $(curl -s $URL > /dev/null 2>&1) 
+    do
+        sleep 1
+    done
+    popd > /dev/null
 }
 
 function deploy_war {
-	local __warfile=${1:-"$BASEDIR/projects/helloworld-rest-war/target/helloworld-rs-0.1.0.war"}
-  local __fullpath_warfile="$(cd $(dirname $__warfile) && pwd)/$(basename $__warfile)"
-	pushd target/jboss-eap-7* > /dev/null
-  bin/jboss-cli.sh -c --command="deploy $__fullpath_warfile"
-  popd
+    local __app_name=${1}
+    local __warfile="$BASEDIR/projects/${__app_name}/target/${__app_name}.war"
+    local __fullpath_warfile="$(cd $(dirname $__warfile) && pwd)/$(basename $__warfile)"
+    pushd target/jboss-eap-7* > /dev/null
+    bin/jboss-cli.sh -c --command="deploy $__fullpath_warfile" | grep -iq "success"
+    popd > /dev/null
 }
 
-function run_eap {
-  mvn_build_project $BASEDIR/projects/helloworld-rest-war
-  install_eap
-  start_eap
-  open_jconsole jboss-eap
-  deploy_war $BASEDIR/projects/helloworld-rest-war/target/helloworld-rs-0.1.0.war
+function run_springboot {
+    local __project="greeting-spring-boot"
+    local __app_name=${__project}
+    
+    action "Build project ${__project}" "mvn_build_project ${__project}"
+
+    action "Waiting for spring boot to start" "start_spring_app ${__project}"
+
+    action "Open Java Console" "open_jconsole ${__app_name}"
+
+    action "Warmup the server" "ab -k -n $NUM_OF_KILO_CALLS -c 1 -s 120 $URL > warmup.txt 2>&1"
+
+    action "Waiting for the warmup to cool off" "sleep 10"
+
+    action "Running performance test" "ab -k -n $NUM_OF_CALLS -c $NUM_OF_USERS -s 120 $URL > performance.txt 2>&1"
+
+    action "Waiting for the performance test to cool off" "sleep 30"
+
+    action "Stopping the server" "kill $(ps -ef | grep ${__app_name} | grep -v grep | awk '{ print $2 }') > /dev/null"
+}
+
+function run_jboss_eap_spring {
+    local __project="greeting-spring"
+    local __app_name="jboss-eap"
+    
+    action "Building project ${__project}" "mvn_build_project ${__project}"
+
+    action "Installing JBoss EAP" "install_eap"
+
+    action "Start JBoss EAP" "start_eap"
+
+    action "Deploying the ${__project}.war to JBoss EAP" "deploy_war ${__project}"
+
+    action "Open Java Console" "open_jconsole ${__app_name}"
+
+    action "Warmup the server" "ab -k -n $NUM_OF_KILO_CALLS -c 1 -s 120 $URL > warmup.txt 2>&1"
+
+    action "Waiting for the warmup to cool off" "sleep 10"
+
+    action "Running performance test" "ab -k -n $NUM_OF_CALLS -c $NUM_OF_USERS -s 120 $URL > performance.txt 2>&1"
+
+    action "Waiting for the performance test to cool off" "sleep 30"
+
+    action "Stopping the server" "kill $(jps -l | grep ${__app_name} | grep -v grep | awk '{ print $1 }') > /dev/null"
+}
+
+function run_jboss_eap_javaee {
+    local __project="greeting-javaee"
+    local __app_name="jboss-eap"
+
+    action "Building project ${__project}" "mvn_build_project ${__project}"
+
+    action "Installing JBoss EAP" "install_eap"
+
+    action "Start JBoss EAP" "start_eap"
+
+    action "Deploying the ${__project}.war to JBoss EAP" "deploy_war ${__project}"
+
+    action "Open Java Console" "open_jconsole ${__app_name}"
+
+    action "Warmup the server" "ab -k -n $NUM_OF_KILO_CALLS -c 1 -s 120 $URL > warmup.txt 2>&1"
+
+    action "Waiting for the warmup to cool off" "sleep 10"
+
+    action "Running performance test" "ab -k -n $NUM_OF_CALLS -c $NUM_OF_USERS -s 120 $URL > performance.txt 2>&1"
+
+    action "Waiting for the performance test to cool off" "sleep 30"
+
+    action "Stopping the server" "kill $(jps -l | grep ${__app_name} | grep -v grep | awk '{ print $1 }') > /dev/null"
 
 }
 
 function help {
-		local command_name="run.sh"
+        local command_name="run.sh"
         echo "Valid commands:"
-        echo "$command_name spring [project-dir] [max-memory]"
+        echo "$command_name spring-boot"
         echo "$command_name jws"
-        echo "$command_name eap"
+        echo "$command_name jboss-eap-spring"
+        echo "$command_name jboss-eap-javaee"
         echo "$command_name kill-all"
 }
 
 function not_implemented_yet {
-	echo "This feature has not been implemented yet"
+    echo "This feature has not been implemented yet"
 }
 
 if [[ $# -gt 0 ]]
 then
    key="$1"
    case $key in
-      spring)
+      spring-boot)
         shift # past argument
         run_springboot "$@"
         ;;
@@ -124,11 +183,15 @@ then
         shift # past argument
         not_implemented_yet
         ;;
-      eap)
+      jboss-eap-spring)
         shift # past argument
-        run_eap "$@"
+        run_jboss_eap_spring "$@"
         ;;
-	  kill-all)
+      jboss-eap-javaee)
+        shift # past argument
+        run_jboss_eap_javaee "$@"
+        ;;
+      kill-all)
         shift # past argument
         not_implemented_yet
         ;;
