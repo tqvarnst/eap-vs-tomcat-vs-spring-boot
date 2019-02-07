@@ -9,10 +9,10 @@
   <version>1.0.0</version>
 
   <properties>
-    <vertx.version>3.6.0</vertx.version>
-    <vertx-maven-plugin.version>1.0.13</vertx-maven-plugin.version>
+    <vertx.version>3.6.3</vertx.version>
+    <vertx-maven-plugin.version>1.0.18</vertx-maven-plugin.version>
     <vertx.verticle>com.example.demo.App</vertx.verticle>
-
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
   </properties>
   <dependencyManagement>
     <dependencies>
@@ -49,7 +49,7 @@
         </configuration>
       </plugin>
       <plugin>
-        <groupId>io.fabric8</groupId>
+        <groupId>io.reactiverse</groupId>
         <artifactId>vertx-maven-plugin</artifactId>
         <version>${vertx-maven-plugin.version}</version>
         <executions>
@@ -68,7 +68,7 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-shade-plugin</artifactId>
-        <version>2.3</version>
+        <version>3.2.1</version>
         <executions>
           <execution>
             <phase>package</phase>
