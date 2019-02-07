@@ -1,0 +1,13 @@
+performance.txt
+warmup.txt
+installs/*.zip
+target/*
+*.log
+.vscode/*
+.vscode
+.classpath
+.project
+.settings
+.idea
+*.iml
+.DS_Store
